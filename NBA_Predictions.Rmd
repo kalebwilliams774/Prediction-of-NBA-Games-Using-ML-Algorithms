@@ -1,0 +1,333 @@
+---
+title: "NBA Games Predictions"
+author: "Kaleb Williams, Caleb vonMaydell"
+date: "2024-04-18"
+output: html_document
+---
+
+Goal: Use clustering/classification algorithms to see if we can correctly predict whether an NBA team wins a game based off the statistics for each team home or away.
+
+```{r}
+library(cluster)
+```
+
+```{r}
+#Reading data
+
+games.data <- read.csv('games.csv')
+```
+
+```{r}
+#Grabbing features to use for clustering
+
+features <- c(
+  "FG_PCT_home", "FT_PCT_home", "FG3_PCT_home", 
+  "REB_home", "AST_home", "FG_PCT_away",
+  "FT_PCT_away", "FG3_PCT_away", "REB_away", "AST_away"
+)
+```
+
+```{r}
+#Creating clustering data data frame
+
+clustering_data <- games.data[,c('HOME_TEAM_WINS',features)]
+```
+
+```{r}
+#Checking for NA 
+
+any(is.na(clustering_data))
+
+#Omitting NA
+
+clustering_data <- na.omit(clustering_data)
+
+#Ensuring NA has been removed
+
+any(is.na(clustering_data))
+```
+
+```{r}
+#Proportion of home team wins in the data set
+
+sum(clustering_data$HOME_TEAM_WINS == 1, na.rm = TRUE)/
+  length(clustering_data$HOME_TEAM_WINS)
+
+```
+```{r}
+#Propotion of home teams loses (other team wins)
+
+ 1- sum(clustering_data$HOME_TEAM_WINS == 1, na.rm = TRUE)/
+  length(clustering_data$HOME_TEAM_WINS)
+```
+
+```{r}
+#K-means clustering for k=2
+
+k <- 2 # Number of clusters
+set.seed(123)
+kmeans_result <- kmeans(clustering_data[, features], centers = k)
+```
+
+```{r}
+#Percentage of home team win rate for each cluster
+
+cluster_labels <- kmeans_result$cluster
+cluster_wins <- tapply(clustering_data$HOME_TEAM_WINS, cluster_labels, mean)
+print(cluster_wins)
+```
+```{r}
+#Assigning values of 1 and 0 for k-means
+
+kmeans_result$cluster <- ifelse(kmeans_result$cluster == 1, 0, 1)
+```
+
+```{r}
+#Creating confusion matrix 
+
+confusion_matrix <- table(kmeans_result$cluster,clustering_data$HOME_TEAM_WINS)
+confusion_matrix
+```
+```{r}
+#Calculating accuracy
+
+#Predicting loses correctly.
+
+4754/(6153 +7783 +7862)
+
+#Predicting wins correctly.
+
+7783/(6153 +7783 +7862)
+```
+This tells us that k-means with 2 clusters predicted approximately 48% of the wins correctly based off the player stats.
+
+\section*{KNN}
+
+```{r}
+#Package to implement KNN
+
+library(class)
+```
+To implement KNN we must first split our chosen data into training and test data.
+
+```{r}
+#clustering_data variable contains everything we need so we shall split that
+#Into training and testing sets.
+
+x_default <- clustering_data[,-1]
+y_default <- clustering_data[,1]
+```
+
+```{r}
+#splitting data/currently not working cant download package
+
+#library(caret)
+
+#train_indices <- createDataPartition(data$HOME_TEAM_WINS, p = 0.8, list = FALSE)
+
+# Split the data into train and test sets
+#x_train <- x_default[train_indices, ]
+#y_train <- y_default[train_indices]
+#x_test <- x_default[-train_indices, ]
+#y_train <- y_default[-train_indices]
+```
+
+```{r}
+#Alternative splitting
+
+set.seed(123)
+
+train_indices <- sample(nrow(x_default), 0.8 * nrow(x_default))
+
+# Split the data into train and test sets
+x_train <- as.matrix(x_default[train_indices, ])
+y_train <- y_default[train_indices]
+x_test <- as.matrix(x_default[-train_indices, ])
+y_test <- y_default[-train_indices]
+```
+
+```{r}
+#Training KNN model
+
+knn.model <- knn(train=x_train,test=x_test,cl=y_train,k=3)
+```
+
+```{r}
+#Confusion matrix for KNN
+
+table(knn.model, y_test)
+```
+
+```{r}
+#Correct prediction
+
+mean(knn.model == y_test) 
+```
+
+```{r}
+#KNN error rate 
+
+mean(y_test != knn.model) 
+```
+
+KNN is quite accurate at predicting the correct values.
+
+```{r}
+#Finding optimal k for KNN
+
+set.seed(123) # Reproducibility of the models
+
+# Create empty vectors to store accuracy and error rates
+accuracy <- numeric(10)
+error_rate <- numeric(10)
+
+for (i in 1:10) {
+  # Train the kNN model
+  knn_model <- knn(train = x_train, test = x_test, cl = y_train, k = i)
+  
+  # Calculate accuracy
+  accuracy[i] <- mean(knn_model == y_test)
+  
+  # Calculate error rate
+  error_rate[i] <- mean(y_test != knn_model)
+}
+
+accuracy
+```
+
+Since we are dealing with such a large data set as we increase the number of neighbors we see increased accuracy up to k=8 then the error begins to increase again. Therefore for KNN the optimal value of k that minimizes error is the k=9.
+
+```{r}
+#Applying cross validation
+
+# Load the caret library
+library(caret)
+
+# Define the train control using 10-fold cross-validation
+train_control <- trainControl(method = "cv", number = 10)
+
+# Train the kNN model using cross-validation
+knn_model_cv <- train(x = x_default, y = y_default, method = "knn", trControl = train_control, preProcess = c("center", "scale"))
+
+# Print the results
+knn_model_cv
+```
+
+\section*{Neural Network}
+
+We first need to obtain scaled test data from the clustering_data variable, as it contains all features we desire to use. We shall use max-min scaling of the data. Scaling is done to assist in run time speeds of the neural network.
+
+```{r}
+#Scaling data
+
+maxs <- apply(clustering_data, 2, max) 
+mins <- apply(clustering_data, 2, min)
+
+scaled <- as.data.frame(scale(clustering_data, center = mins, scale = maxs - mins))
+```
+
+```{r}
+#Splitting data into test and train
+
+train_ <- scaled[train_indices,]
+test_ <- scaled[-train_indices,]
+```
+
+```{r}
+#Fitting neural network with a single hidden layers
+#with 1 nodes per hidden layer
+#Data is to complex and algorithm will not converge regardless of 
+#max-min standardization
+
+library(neuralnet) # library to fit neural network
+
+n <- names(train_)
+f <- as.formula(paste("HOME_TEAM_WINS ~", paste(n[!n %in% "HOME_TEAM_WINS"]
+                                                , collapse = " + ")))
+nn <- neuralnet(f,data=train_,hidden=1, act.fct = "logistic"
+                , linear.output=T)
+```
+
+```{r}
+#Plotting the neural network
+pdf('neuralnet.pdf')
+plot(nn)
+dev.off()
+```
+
+```{r}
+#Neural network predictions
+
+pr.nn <- compute(nn,test_[,1:11])
+```
+
+```{r}
+#Neural net is scaled so we must descale for comparison
+
+pr.nn_ <- pr.nn$net.result*(max(clustering_data$HOME_TEAM_WINS) - 
+                              min(clustering_data$HOME_TEAM_WINS)) + 
+                              min(clustering_data$HOME_TEAM_WINS)
+
+test.r <- (test_$HOME_TEAM_WINS)*(max(clustering_data$HOME_TEAM_WINS) - 
+                                    min(clustering_data$HOME_TEAM_WINS)) + 
+                                    min(clustering_data$HOME_TEAM_WINS)
+
+```
+
+```{r}
+#Confusion matrix 
+
+conf_mat <- table(predicted = ifelse(pr.nn_ > 0.5, 1, 0), actual = test.r)
+conf_mat
+```
+```{r}
+#Accuracy of neural network
+
+(1722+ 2741)/(1722+406+442+2741) 
+
+```
+
+```{r}
+# Neural net cross validation
+set.seed(123)
+cv.acc <- NULL
+k <- 10
+
+# Initialize progress bar
+library(plyr) 
+pbar <- create_progress_bar('text')
+pbar$init(k)
+
+for(i in 1:k){
+  index <- sample(1:nrow(clustering_data),
+                  round(0.9*nrow(clustering_data)))
+  train.cv <- scaled[index,]
+  test.cv <- scaled[-index,]
+  
+  nn <- neuralnet(f,data=train.cv,hidden=1,linear.output=T)
+  
+  pr.nn <- compute(nn,test.cv[,1:11])
+  pr.nn <- pr.nn$net.result*
+    (max(clustering_data$HOME_TEAM_WINS)-
+       min(clustering_data$HOME_TEAM_WINS))+
+    min(clustering_data$HOME_TEAM_WINS)
+  
+  test.cv.r <- (test.cv$HOME_TEAM_WINS)*
+    (max(clustering_data$HOME_TEAM_WINS)-
+       min(clustering_data$HOME_TEAM_WINS))+
+    min(clustering_data$HOME_TEAM_WINS)
+  
+  conf_mat <- table(predicted = ifelse(pr.nn > 0.5, 1, 0), actual = test.cv.r)
+  print(conf_mat)
+  
+  cv.acc[i] <- (conf_mat[1,1]+conf_mat[2,2])/(conf_mat[1,1]+conf_mat[2,2]+
+                                                conf_mat[1,2]+conf_mat[2,1])
+  pbar$step()
+}
+```
+
+
+
+
+
+
